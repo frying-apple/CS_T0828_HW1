@@ -4,15 +4,18 @@ from csv import reader
 import numpy as np
 import os
 import operator
+import math
+import matplotlib.pyplot as plt
+from datetime import datetime
 
 class Preprocessing:
-    def __init__(self):
+    def __init__(self,train=False):
         self.file = pathlib.Path('.\\cs-t0828-2020-hw1\\')  # windows
         # self.filepath = pathlib.Path('') # ubuntu
 
-        self.N_batch = 8
+        self.N_batch = 16
 
-        self.resolution = 200 # resize/crop to square image of this size
+        self.resolution = 224 # resize/crop to square image of this size
 
 
         self.N_classes = 196
@@ -30,7 +33,25 @@ class Preprocessing:
 
         self.preprocess()
 
+        self.ds_input = self.create_dataset_input()
+        self.ds_target = self.create_dataset_target()
+        self.ds_input_target = self.create_dataset_input_target()
 
+        self.model = self.build_model()
+
+        if train:
+            logs = "logs/" + datetime.now().strftime("%Y%m%d-%H%M%S")
+            tboard_callback = tf.keras.callbacks.TensorBoard(
+                log_dir=logs,
+                histogram_freq=1
+            )
+            history = self.model.fit(
+                self.ds_input_target,
+                batch_size=self.N_batch,
+                epochs=5,
+                steps_per_epoch=self.N_train,
+                callbacks=[tboard_callback]
+            )
         return
 
     def preprocess(self):
@@ -79,8 +100,14 @@ class Preprocessing:
 
         # now that image paths (train/test_contents) and labels (csv_sorted) are sorted, save to self
         # then use tf.data with generator
-        self.file_list_train = train_contents
-        self.file_list_test = test_contents
+        train_contents_full = []
+        test_contents_full = []
+        for obj in train_contents:
+            train_contents_full.append(os.path.join(train_path,obj))
+        for obj in test_contents:
+            test_contents_full.append(os.path.join(test_path,obj))
+        self.file_list_train = train_contents_full
+        self.file_list_test = test_contents_full
         #self.train_labels = csv_sorted
 
 
@@ -127,13 +154,24 @@ class Preprocessing:
             self.generator_input,
             args=(self.resolution, self.file_list_train),
             output_types=(tf.float32),
-            output_shapes=([tf.TensorShape([100,100,3])])
+            output_shapes=(tf.TensorShape([self.resolution,self.resolution,3]))
         )
         ds_input = ds_input.batch(self.N_batch)
         return ds_input
 
+    def create_dataset_input_test(self):
+        ds_input = tf.data.Dataset.from_generator(
+            self.generator_input,
+            args=(self.resolution, self.file_list_test),
+            output_types=(tf.float32),
+            output_shapes=(tf.TensorShape([self.resolution, self.resolution, 3]))
+        )
+        ds_input = ds_input.batch(self.N_batch)
+        return ds_input
+
+
     @staticmethod
-    def generator_input(resolution, file_list): # TODO
+    def generator_input(resolution, file_list):
         N_images = len(file_list)
         count = 0
         while True:
@@ -144,32 +182,43 @@ class Preprocessing:
 
             # get image
             img = tf.io.read_file(file_list[count])
-            img = tf.image.decode_png(img)
-            img = tf.image.convert_image_dtype(img,tf.float32)
-            img = img.numpy()
+            img = tf.image.decode_png(img,3) # return RGB image # aka tf.io.decode_png
+            img = tf.image.convert_image_dtype(img,tf.float32) # TODO: why does this return values like 1.0000002 ?  ignore for now
+            #img = img.numpy()
 
-            # get dimensions
-            img_shape = img.shape
+            ## get dimensions
+            #img_shape = img.shape
+#
+            ## resize to minimum dimension
+            #min_res = 150 # px
+            #if img_shape[0] < min_res:
+            #    resize_factor = min_res/img_shape[0]
+            #elif img_shape[1] < min_res:
+            #    resize_factor = min_res/img_shape[1]
+            #else:
+            #    resize_factor = 1.0
+#
+            ## fix the logic here; find smallest dimension; resize using it
+            #min_dim = np.min([img_shape[0],img_shape[1]])
+            #resize_factor = min_res/min_dim
+#
+#
+#
+            ## resize to at least min_res; keep aspect ratio
+            #img = tf.image.resize(img, (math.ceil(img_shape[0]*resize_factor), math.ceil(img_shape[1]*resize_factor)), antialias=True)
+#
+            ## random crop a square
+            #output_size = 130 # px
+            #img = tf.image.random_crop(img, [output_size,output_size,3])  # should be smaller than min_res
 
-            # resize to minimum dimension
-            min_res = 150 # px
-            if img_shape[0] < min_res:
-                resize_factor = min_res/img_shape[0]
-            elif img_shape[1] < min_res:
-                resize_factor = min_res/img_shape[1]
-            else:
-                resize_factor = 1.0
-
-            # resize to at least min_res; keep aspect ratio
-            img = tf.image.resize(img, (img_shape[0]*resize_factor, img_shape[1]*resize_factor), antialias=True)
-
-            # random crop a square
-            output_size = 100 # px
-            img = tf.image.random_crop(img, [output_size,output_size,3])  # should be smaller than min_res
-
-            # optionally, also change image brightness, saturation, hue, etc. using dataset map
+            # optionally, also change image brightness, saturation, hue, etc.
             # see https://www.tensorflow.org/tutorials/images/data_augmentation
 
+            # the most important thing to identify a car is the logo; if crop doesn't see it, probably fail
+            # therefore, use resize_with_pad()
+            img = tf.image.resize_with_pad(img,resolution,resolution,antialias=True)
+
+            count += 1
             yield img
 
     def create_dataset_target(self):
@@ -198,13 +247,45 @@ class Preprocessing:
 
             out = np.zeros((N_classes), dtype=np.float32)
             out[id_list[count]] = 1
+
+            count += 1
             yield out # one-hot vector of length N_classes
 
-    def save_npz(self):
-        '''
-        save numpy arrays to disk so can load for training/testing
-        '''
-        return 0
+    def create_dataset_input_target(self):
+        ds_input_target = tf.data.Dataset.zip((self.ds_input, self.ds_target)).repeat()
+        return ds_input_target
+
+
+    def build_model(self):
+
+        x0 = tf.keras.layers.Input((self.resolution,self.resolution,3))
+        x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x0)
+        x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        x = tf.keras.layers.MaxPooling2D()(x)
+        x = tf.keras.layers.Conv2D(256, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        x = tf.keras.layers.Conv2D(256, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        x = tf.keras.layers.MaxPooling2D()(x)
+        x = tf.keras.layers.Conv2D(256, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        x = tf.keras.layers.Conv2D(256, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        x = tf.keras.layers.MaxPooling2D()(x)
+        x = tf.keras.layers.Conv2D(256, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        x = tf.keras.layers.Conv2D(256, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        x = tf.keras.layers.MaxPooling2D()(x)
+        x = tf.keras.layers.Flatten()(x)
+
+        x = tf.keras.layers.Dense(200, activation='relu')(x)
+        x = tf.keras.layers.Dense(self.N_classes, activation='softmax')(x)
+
+        model = tf.keras.Model(x0,x)
+
+        model.summary()
+
+        model.compile(
+            optimizer='adam',
+            loss=tf.keras.losses.CategoricalCrossentropy(),
+            metrics=[tf.keras.metrics.CategoricalAccuracy()]
+        )
+        return model
 
 
 # end Preprocessing
@@ -221,6 +302,31 @@ if __name__ == '__main__':
             print(e)
 
     x = Preprocessing()
-    #x.save_npz()
+    ds_input = x.ds_input
+    ds_target = x.ds_target
+
+    print('--------taking from ds_input-----------')
+    N = 2
+    for img in ds_input.take(N):
+        print(img.shape)
+
+        plt.figure()
+        for i in range(x.N_batch):
+
+            plt.subplot(1,x.N_batch,i+1)
+            #plt.imshow(sum(img)/x.N_batch)
+            plt.imshow(img[i,:])
+
+    print('---------taking from ds_target----------')
+    for label in ds_target.take(N):
+        print(label)
 
     print('done preprocessing')
+
+    # ---------------------------------------------------
+    # make a new instance and train
+    print('beginning to train...')
+    x2 = Preprocessing(train=True)
+
+    print('-- done')
+

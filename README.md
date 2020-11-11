@@ -13,6 +13,8 @@ Make a conda environment in a path without spaces.  I use: C:\anaconda3\envs\CS_
 
 pip install tensorflow==2.3.1
 
+Also, install other packages listed in preprocessing.py
+
 I am using an old version of CUDNN, etc. so will get "Could not load dynamic library"; therefore, do this extra step:
 
 Copy the following dll from somewhere into: C:\anaconda3\envs\CS_T0828_HW1\Library\bin\ 
@@ -27,5 +29,7 @@ cudnn64_7.dll
 
 Then, the beginning section of preprocessing.py should return "Num GPUs Available:  1" in the console.
 
-## Preprocessing
+## Run
 Run preprocessing.py
+
+This will preprocess and train
