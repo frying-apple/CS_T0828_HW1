@@ -52,6 +52,7 @@ class Preprocessing:
                 steps_per_epoch=self.N_train,
                 callbacks=[tboard_callback]
             )
+            self.model.save('./models/model/')
         return
 
     def preprocess(self):
