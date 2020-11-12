@@ -7,6 +7,8 @@ import operator
 import math
 import matplotlib.pyplot as plt
 from datetime import datetime
+import time
+import csv
 
 class Preprocessing:
     def __init__(self,train=False):
@@ -15,7 +17,7 @@ class Preprocessing:
 
         self.N_batch = 16
 
-        self.resolution = 224 # resize/crop to square image of this size
+        self.resolution = 50 #224 # resize/crop to square image of this size
 
 
         self.N_classes = 196
@@ -50,7 +52,7 @@ class Preprocessing:
                 self.ds_input_target,
                 batch_size=self.N_batch,
                 epochs=5,
-                steps_per_epoch=self.N_train,
+                #steps_per_epoch=self.N_train,
                 callbacks=[tboard_callback]
             )
             self.model.save('./models/model/')
@@ -176,7 +178,7 @@ class Preprocessing:
     def generator_input(resolution, file_list):
         N_images = len(file_list)
         count = 0
-        while True:
+        while count<N_images:
             if (count >= N_images):
                 count = 0
 
@@ -184,7 +186,7 @@ class Preprocessing:
 
             # get image
             img = tf.io.read_file(file_list[count])
-            img = tf.image.decode_png(img,3) # return RGB image # aka tf.io.decode_png
+            img = tf.image.decode_jpeg(img,3) # return RGB image # aka tf.io.decode_png
             img = tf.image.convert_image_dtype(img,tf.float32) # TODO: why does this return values like 1.0000002 ?  ignore for now
             #img = img.numpy()
 
@@ -218,7 +220,8 @@ class Preprocessing:
 
             # the most important thing to identify a car is the logo; if crop doesn't see it, probably fail
             # therefore, use resize_with_pad()
-            img = tf.image.resize_with_pad(img,resolution,resolution,antialias=True)
+            #img = tf.image.resize_with_pad(img,resolution,resolution,antialias=True)
+            img = tf.image.resize(img,[resolution,resolution],antialias=True)
 
             count += 1
             yield img
@@ -243,7 +246,7 @@ class Preprocessing:
         '''
         N_images = len(id_list)
         count = 0
-        while True:
+        while count < N_images:
             if (count >= N_images):
                 count = 0
 
@@ -254,28 +257,33 @@ class Preprocessing:
             yield out # one-hot vector of length N_classes
 
     def create_dataset_input_target(self):
-        ds_input_target = tf.data.Dataset.zip((self.ds_input, self.ds_target)).repeat().prefetch(tf.data.experimental.AUTOTUNE)
+        ds_input_target = tf.data.Dataset.zip((self.ds_input, self.ds_target)).shuffle(self.N_train).prefetch(tf.data.experimental.AUTOTUNE)
         return ds_input_target
 
 
     def build_model(self):
 
         x0 = tf.keras.layers.Input((self.resolution,self.resolution,3))
-        x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x0)
-        x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+
+        # normalize approximately by shifting
+        x = tf.keras.layers.Lambda(lambda x: x - 0.5)(x0)
+
+        #x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        #x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        #x = tf.keras.layers.MaxPooling2D()(x)
+        #x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        #x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
         x = tf.keras.layers.MaxPooling2D()(x)
-        x = tf.keras.layers.Conv2D(256, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
-        x = tf.keras.layers.Conv2D(256, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
-        x = tf.keras.layers.MaxPooling2D()(x)
-        x = tf.keras.layers.Conv2D(256, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
-        x = tf.keras.layers.Conv2D(256, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
-        x = tf.keras.layers.MaxPooling2D()(x)
-        x = tf.keras.layers.Conv2D(256, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
-        x = tf.keras.layers.Conv2D(256, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
-        x = tf.keras.layers.MaxPooling2D()(x)
+        #x = tf.keras.layers.Conv2D(256, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        #x = tf.keras.layers.Conv2D(256, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        #x = tf.keras.layers.MaxPooling2D()(x)
+        #x = tf.keras.layers.Conv2D(256, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        #x = tf.keras.layers.Conv2D(256, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        #x = tf.keras.layers.MaxPooling2D()(x)
+        x = tf.keras.layers.BatchNormalization()(x)
         x = tf.keras.layers.Flatten()(x)
 
-        x = tf.keras.layers.Dense(400, activation='relu')(x)
+        x = tf.keras.layers.Dense(700, activation='relu', kernel_initializer='he_normal', kernel_regularizer=tf.keras.regularizers.L1(0.01))(x)
         x = tf.keras.layers.Dense(self.N_classes, activation='softmax')(x)
 
         model = tf.keras.Model(x0,x)
@@ -283,7 +291,8 @@ class Preprocessing:
         model.summary()
 
         model.compile(
-            optimizer='adam',
+            #optimizer=tf.keras.optimizers.Adam(),
+            optimizer=tf.keras.optimizers.RMSprop(learning_rate=1e-3),
             loss=tf.keras.losses.CategoricalCrossentropy(),
             metrics=[tf.keras.metrics.CategoricalAccuracy()]
         )
@@ -291,6 +300,114 @@ class Preprocessing:
 
 
 # end Preprocessing
+
+class Train:
+    def __init__(self, N_classes, N_batch, resolution, all_img, all_label, all_img_test, file_list_test):
+        self.N_classes = N_classes
+        self.N_batch = N_batch
+        self.resolution = resolution
+        self.all_img = all_img
+        self.all_label = all_label
+        self.all_img_test = all_img_test
+        self.file_list_test = file_list_test
+
+        self.model = self.build_model()
+
+        self.test_predictions = []
+
+        return
+
+    def build_model(self):
+        # build model
+        x0 = tf.keras.layers.Input((self.resolution, self.resolution, 3))
+
+        # normalize approximately by shifting
+        x = tf.keras.layers.Lambda(lambda x: x - 0.5)(x0)
+
+        x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        x = tf.keras.layers.MaxPooling2D()(x)
+
+        x = tf.keras.layers.BatchNormalization()(x)
+        x = tf.keras.layers.Flatten()(x)
+
+        x = tf.keras.layers.Dense(700, activation='relu', kernel_initializer='he_normal',
+                                  kernel_regularizer=tf.keras.regularizers.L1(0.01))(x)
+        x = tf.keras.layers.Dense(self.N_classes, activation='softmax')(x)
+
+        model = tf.keras.Model(x0, x)
+        model.summary()
+
+        model.compile(
+            # optimizer=tf.keras.optimizers.Adam(),
+            optimizer=tf.keras.optimizers.RMSprop(learning_rate=1e-3),
+            loss=tf.keras.losses.CategoricalCrossentropy(),
+            metrics=[tf.keras.metrics.CategoricalAccuracy()]
+        )
+        return model
+
+    def train(self): # train using all_img, all_label
+
+        # tf.data from tensor slices
+        ds_input_target = tf.data.Dataset.from_tensor_slices((self.all_img, self.all_label))
+
+        # train
+        logs = "logs/" + datetime.now().strftime("%Y%m%d-%H%M%S")
+        tboard_callback = tf.keras.callbacks.TensorBoard(
+            log_dir=logs,
+            histogram_freq=1
+        )
+        history = self.model.fit(
+            ds_input_target,
+            batch_size=self.N_batch,
+            epochs=5,
+            # steps_per_epoch=self.N_train,
+            callbacks=[tboard_callback]
+        )
+        self.model.save('./models/model_2/')
+
+        return
+
+    def load_model(self):
+        self.model = tf.keras.models.load_model('./models/model_2/')
+        return
+
+    def test(self):
+        ds = tf.data.Dataset.from_tensor_slices((self.all_img_test))
+
+        # predict and save csv
+        result = self.model.predict(ds, batch_size=self.N_batch)
+        self.test_predictions = result
+
+        header = ['id', 'label']
+        rows = []
+        for obj in result:
+            idx = np.argmax(obj)
+            # convert integer to label string
+            label = x.get_label(idx)
+            rows.append(label)
+
+        ids = []
+        ids2 = []
+        for obj in self.file_list_test:
+            id = obj.split('\\')[-1]  # ###.jpg
+            ids.append(id)
+        for obj in ids:
+            id = obj.split('.')[0]  # ###
+            ids2.append(id)
+
+        rows2 = []
+        for obj in list(zip(ids2, rows)):
+            rows2.append([obj[0], obj[1]])
+
+        # write to csv
+        file = 'test_2.csv'
+        with open(file, 'w', newline='') as csvfile:
+            csvwriter = csv.writer(csvfile)
+            csvwriter.writerow(header)
+            csvwriter.writerows(rows2)
+        return
+# end Train
 
 if __name__ == '__main__':
     print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
@@ -327,11 +444,47 @@ if __name__ == '__main__':
 
     # ---------------------------------------------------
     # make a new instance and train
-    print('beginning to train...')
-    x2 = Preprocessing(train=True)
+    #print('beginning to train...')
+    #x2 = Preprocessing(train=True)
 
+    # ---------------------------------------------------
+    # try another way to train
+    x2 = Preprocessing(train=False)
+    count = 0
+    for (img,label) in x2.ds_input_target.take(-1): # take batches until end
+        print(img.shape)
+        print(label.shape)
+        if count==0:
+            all_img = img
+            all_label = label
+            count += 1
+        else:
+            all_img = np.concatenate([all_img, img])
+            all_label = np.concatenate([all_label, label])
+            count += 1
+    print(all_img.shape)
+    print(all_label.shape)
 
+    count = 0
+    for img in x2.ds_input_test.take(-1):
+        if count==0:
+            all_img_test = img
+            count += 1
+        else:
+            all_img_test = np.concatenate([all_img_test, img])
+            count += 1
+    print(all_img_test.shape)
 
+    # show example i
+    i = 0
+    plt.figure()
+    plt.imshow(all_img[i])
+    plt.title(x2.get_label(np.argmax(all_label[i])))
+
+    # train
+    xx = Train(x2.N_classes, x2.N_batch, x2.resolution, all_img, all_label, all_img_test, x2.file_list_test)
+    xx.train()
+    xx.test()
 
     print('-- done')
 
