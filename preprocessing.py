@@ -36,6 +36,7 @@ class Preprocessing:
         self.ds_input = self.create_dataset_input()
         self.ds_target = self.create_dataset_target()
         self.ds_input_target = self.create_dataset_input_target()
+        self.ds_input_test = self.create_dataset_input_test()
 
         self.model = self.build_model()
 
@@ -253,7 +254,7 @@ class Preprocessing:
             yield out # one-hot vector of length N_classes
 
     def create_dataset_input_target(self):
-        ds_input_target = tf.data.Dataset.zip((self.ds_input, self.ds_target)).repeat()
+        ds_input_target = tf.data.Dataset.zip((self.ds_input, self.ds_target)).repeat().prefetch(tf.data.experimental.AUTOTUNE)
         return ds_input_target
 
 
@@ -274,7 +275,7 @@ class Preprocessing:
         x = tf.keras.layers.MaxPooling2D()(x)
         x = tf.keras.layers.Flatten()(x)
 
-        x = tf.keras.layers.Dense(200, activation='relu')(x)
+        x = tf.keras.layers.Dense(400, activation='relu')(x)
         x = tf.keras.layers.Dense(self.N_classes, activation='softmax')(x)
 
         model = tf.keras.Model(x0,x)
@@ -328,6 +329,9 @@ if __name__ == '__main__':
     # make a new instance and train
     print('beginning to train...')
     x2 = Preprocessing(train=True)
+
+
+
 
     print('-- done')
 

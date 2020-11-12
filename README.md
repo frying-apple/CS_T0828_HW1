@@ -32,4 +32,8 @@ Then, the beginning section of preprocessing.py should return "Num GPUs Availabl
 ## Run
 Run preprocessing.py
 
-This will preprocess and train
+This will preprocess, train, and save the model.
+
+Run test.py
+
+This will preprocess (again), load the model, and test it.  See 'test.csv' for result.
