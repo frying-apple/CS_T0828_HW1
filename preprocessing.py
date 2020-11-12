@@ -17,7 +17,7 @@ class Preprocessing:
 
         self.N_batch = 16
 
-        self.resolution = 50 #224 # resize/crop to square image of this size
+        self.resolution = 112 #224 # resize/crop to square image of this size
 
 
         self.N_classes = 196
@@ -257,7 +257,7 @@ class Preprocessing:
             yield out # one-hot vector of length N_classes
 
     def create_dataset_input_target(self):
-        ds_input_target = tf.data.Dataset.zip((self.ds_input, self.ds_target)).shuffle(self.N_train).prefetch(tf.data.experimental.AUTOTUNE)
+        ds_input_target = tf.data.Dataset.zip((self.ds_input, self.ds_target)).shuffle(self.N_train).prefetch(tf.data.experimental.AUTOTUNE) # TODO: re-enable shuffle
         return ds_input_target
 
 
@@ -302,7 +302,7 @@ class Preprocessing:
 # end Preprocessing
 
 class Train:
-    def __init__(self, N_classes, N_batch, resolution, all_img, all_label, all_img_test, file_list_test):
+    def __init__(self, N_classes, N_batch, resolution, all_img, all_label, all_img_test, file_list_test, unique_labels):
         self.N_classes = N_classes
         self.N_batch = N_batch
         self.resolution = resolution
@@ -310,12 +310,19 @@ class Train:
         self.all_label = all_label
         self.all_img_test = all_img_test
         self.file_list_test = file_list_test
+        self.unique_labels = unique_labels
 
         self.model = self.build_model()
 
         self.test_predictions = []
 
         return
+
+    def get_label(self,id):
+        '''
+        return label string corresponding to integer id for one-hot encoding
+        '''
+        return self.unique_labels[id]
 
     def build_model(self):
         # build model
@@ -327,29 +334,35 @@ class Train:
         x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
         x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
         x = tf.keras.layers.MaxPooling2D()(x)
+        x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        x = tf.keras.layers.MaxPooling2D()(x)
 
         x = tf.keras.layers.BatchNormalization()(x)
         x = tf.keras.layers.Flatten()(x)
 
-        x = tf.keras.layers.Dense(700, activation='relu', kernel_initializer='he_normal',
-                                  kernel_regularizer=tf.keras.regularizers.L1(0.01))(x)
-        x = tf.keras.layers.Dense(self.N_classes, activation='softmax')(x)
+        x = tf.keras.layers.Dense(500, activation='relu', kernel_initializer='he_normal', kernel_regularizer=tf.keras.regularizers.L1(0.0))(x)
+        x = tf.keras.layers.Dense(self.N_classes, activation='softmax', bias_regularizer=tf.keras.regularizers.L2(), bias_initializer=tf.keras.initializers.Zeros())(x)
 
         model = tf.keras.Model(x0, x)
         model.summary()
 
-        model.compile(
+
+        return model
+
+    def train(self, epochs=5, lr=1e-3): # train using all_img, all_label
+
+        self.model.compile(
             # optimizer=tf.keras.optimizers.Adam(),
-            optimizer=tf.keras.optimizers.RMSprop(learning_rate=1e-3),
+            #optimizer=tf.keras.optimizers.RMSprop(learning_rate=lr),
+            optimizer=tf.keras.optimizers.SGD(learning_rate=lr, momentum=0.0),
             loss=tf.keras.losses.CategoricalCrossentropy(),
             metrics=[tf.keras.metrics.CategoricalAccuracy()]
         )
-        return model
-
-    def train(self): # train using all_img, all_label
 
         # tf.data from tensor slices
-        ds_input_target = tf.data.Dataset.from_tensor_slices((self.all_img, self.all_label))
+        ds_input_target = tf.data.Dataset.from_tensor_slices((self.all_img, self.all_label)).batch(self.N_batch)
+        print(ds_input_target)
 
         # train
         logs = "logs/" + datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -360,11 +373,15 @@ class Train:
         history = self.model.fit(
             ds_input_target,
             batch_size=self.N_batch,
-            epochs=5,
+            epochs=epochs,
             # steps_per_epoch=self.N_train,
             callbacks=[tboard_callback]
         )
         self.model.save('./models/model_2/')
+
+        # evaluate
+        print('evaluating...')
+        self.model.evaluate(self.all_img, self.all_label)
 
         return
 
@@ -373,7 +390,7 @@ class Train:
         return
 
     def test(self):
-        ds = tf.data.Dataset.from_tensor_slices((self.all_img_test))
+        ds = tf.data.Dataset.from_tensor_slices((self.all_img_test)).batch(self.N_batch)
 
         # predict and save csv
         result = self.model.predict(ds, batch_size=self.N_batch)
@@ -384,7 +401,7 @@ class Train:
         for obj in result:
             idx = np.argmax(obj)
             # convert integer to label string
-            label = x.get_label(idx)
+            label = self.get_label(idx) # DONE: shouldn't reference x here; add unique_labels to __init__ args
             rows.append(label)
 
         ids = []
@@ -440,6 +457,7 @@ if __name__ == '__main__':
     for label in ds_target.take(N):
         print(label)
 
+    x = None # delete
     print('done preprocessing')
 
     # ---------------------------------------------------
@@ -451,28 +469,37 @@ if __name__ == '__main__':
     # try another way to train
     x2 = Preprocessing(train=False)
     count = 0
-    for (img,label) in x2.ds_input_target.take(-1): # take batches until end
-        print(img.shape)
-        print(label.shape)
-        if count==0:
-            all_img = img
-            all_label = label
-            count += 1
-        else:
-            all_img = np.concatenate([all_img, img])
-            all_label = np.concatenate([all_label, label])
-            count += 1
+    all_img_list = []
+    all_label_list = []
+    for (img,label) in x2.ds_input_target.take(-1): # -1: take batches until end
+        #print(img.shape)
+        #print(label.shape)
+        #if count==0:
+        #    all_img = img
+        #    all_label = label
+        #    count += 1
+        #else:
+        #    all_img = np.concatenate([all_img, img])
+        #    all_label = np.concatenate([all_label, label])
+        #    count += 1
+        all_img_list.append(img)
+        all_label_list.append(label)
+    all_img = np.concatenate(all_img_list)
+    all_label = np.concatenate(all_label_list)
     print(all_img.shape)
     print(all_label.shape)
 
     count = 0
+    all_img_test_list = []
     for img in x2.ds_input_test.take(-1):
-        if count==0:
-            all_img_test = img
-            count += 1
-        else:
-            all_img_test = np.concatenate([all_img_test, img])
-            count += 1
+        #if count==0:
+        #    all_img_test = img
+        #    count += 1
+        #else:
+        #    all_img_test = np.concatenate([all_img_test, img])
+        #    count += 1
+        all_img_test_list.append(img)
+    all_img_test = np.concatenate(all_img_test_list)
     print(all_img_test.shape)
 
     # show example i
@@ -482,8 +509,8 @@ if __name__ == '__main__':
     plt.title(x2.get_label(np.argmax(all_label[i])))
 
     # train
-    xx = Train(x2.N_classes, x2.N_batch, x2.resolution, all_img, all_label, all_img_test, x2.file_list_test)
-    xx.train()
+    xx = Train(x2.N_classes, x2.N_batch, x2.resolution, all_img, all_label, all_img_test, x2.file_list_test, x2.unique_labels)
+    xx.train(epochs=5, lr=1e-3)
     xx.test()
 
     print('-- done')
