@@ -17,7 +17,7 @@ class Preprocessing:
 
         self.N_batch = 16
 
-        self.resolution = 112 #224 # resize/crop to square image of this size
+        self.resolution = 224 #224 # resize/crop to square image of this size
 
 
         self.N_classes = 196
@@ -337,6 +337,9 @@ class Train:
         x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
         x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
         x = tf.keras.layers.MaxPooling2D()(x)
+        x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        x = tf.keras.layers.MaxPooling2D()(x)
 
         x = tf.keras.layers.BatchNormalization()(x)
         x = tf.keras.layers.Flatten()(x)
@@ -510,7 +513,7 @@ if __name__ == '__main__':
 
     # train
     xx = Train(x2.N_classes, x2.N_batch, x2.resolution, all_img, all_label, all_img_test, x2.file_list_test, x2.unique_labels)
-    xx.train(epochs=5, lr=1e-3)
+    xx.train(epochs=10, lr=1e-3)
     xx.test()
 
     print('-- done')
