@@ -30,10 +30,13 @@ cudnn64_7.dll
 Then, the beginning section of preprocessing.py should return "Num GPUs Available:  1" in the console.
 
 ## Run
-Run preprocessing.py
+<s>Run preprocessing.py
 
 This will preprocess, train, and save the model.  Also, it will test and save 'test_2.csv' for uploading.
 
-<s>Run test.py
+Run test.py
 
 This will preprocess (again), load the model, and test it.  See 'test.csv' for result.</s>
+
+New instructions: run preprocessing.py to preprocess.  This will write a shuffled dataset to disk.  Then run train_v2.py.  This will train the model, 
+save it to disk, and test.

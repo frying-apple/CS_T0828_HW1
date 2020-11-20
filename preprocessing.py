@@ -9,6 +9,11 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 import time
 import csv
+import pickle
+from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2
+
+#tf.config.run_functions_eagerly(True)
+#print(tf.config.functions_run_eagerly())
 
 class Preprocessing:
     def __init__(self,train=False):
@@ -331,20 +336,37 @@ class Train:
         # normalize approximately by shifting
         x = tf.keras.layers.Lambda(lambda x: x - 0.5)(x0)
 
-        x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        # augment // this only applies during training
+        #x = tf.keras.layers.experimental.preprocessing.RandomZoom(0.2)(x)
+        x = tf.keras.layers.experimental.preprocessing.RandomRotation(1.0)(x)
+        #x = tf.keras.layers.experimental.preprocessing.RandomTranslation(0.2, 0.2)(x)
+        #x = tf.keras.layers.experimental.preprocessing.RandomContrast(0.2)(x)
+
+        #x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
         x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
         x = tf.keras.layers.MaxPooling2D()(x)
-        x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        #x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
         x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
         x = tf.keras.layers.MaxPooling2D()(x)
-        x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
-        x = tf.keras.layers.Conv2D(128, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        #x = tf.keras.layers.Conv2D(256, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        x = tf.keras.layers.Conv2D(256, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        x = tf.keras.layers.MaxPooling2D()(x)
+        #x = tf.keras.layers.Conv2D(512, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
+        x = tf.keras.layers.Conv2D(512, 3, activation='relu', kernel_initializer='he_normal', trainable=True)(x)
         x = tf.keras.layers.MaxPooling2D()(x)
 
         x = tf.keras.layers.BatchNormalization()(x)
         x = tf.keras.layers.Flatten()(x)
 
-        x = tf.keras.layers.Dense(500, activation='relu', kernel_initializer='he_normal', kernel_regularizer=tf.keras.regularizers.L1(0.0))(x)
+        #x=[]
+        #base_model = MobileNetV2(include_top=False,input_shape=(self.resolution, self.resolution, 3))
+        #base_model.trainable = False
+        #x = base_model(x0)
+        #x = tf.keras.layers.Flatten()(x)
+        ##x = tf.keras.layers.GlobalAveragePooling2D()(x)
+
+        x = tf.keras.layers.Dense(100, activation='relu', kernel_initializer='he_normal', kernel_regularizer=tf.keras.regularizers.L1(0.0))(x)
+        #x = tf.keras.layers.Dropout(0.5)(x)
         x = tf.keras.layers.Dense(self.N_classes, activation='softmax', bias_regularizer=tf.keras.regularizers.L2(), bias_initializer=tf.keras.initializers.Zeros())(x)
 
         model = tf.keras.Model(x0, x)
@@ -364,7 +386,23 @@ class Train:
         )
 
         # tf.data from tensor slices
-        ds_input_target = tf.data.Dataset.from_tensor_slices((self.all_img, self.all_label)).batch(self.N_batch)
+        ds_input_target = tf.data.Dataset.from_tensor_slices((self.all_img, self.all_label)) # move .batch() to after .map()
+
+        # apply augmentation
+        def augment(img,label):
+            img = tf.image.random_jpeg_quality(img, 70, 100) # ValueError: Shape must be rank 3 but is rank 4
+            img = tf.image.random_flip_left_right(img)
+            img = tf.image.random_flip_up_down(img)
+            img = tf.image.random_hue(img, max_delta=0.2)
+            img = tf.image.random_brightness(img, max_delta=0.2)
+            img = tf.clip_by_value(img, 0.0, 1.0)
+            crop_resolution = int(0.8*self.resolution)
+            img = tf.image.random_crop(img, size=[crop_resolution, crop_resolution, 3])
+            img = tf.image.resize(img, size=[self.resolution, self.resolution])
+            return img, label
+
+        ds_input_target = ds_input_target.map(augment, num_parallel_calls=tf.data.experimental.AUTOTUNE).batch(self.N_batch).prefetch(tf.data.experimental.AUTOTUNE)
+
         print(ds_input_target)
 
         # train
@@ -374,11 +412,14 @@ class Train:
             histogram_freq=1
         )
         history = self.model.fit(
-            ds_input_target,
+            #x=ds_input_target, # don't use w/ validation_split
+            x=self.all_img,
+            y=self.all_label,
             batch_size=self.N_batch,
             epochs=epochs,
             # steps_per_epoch=self.N_train,
-            callbacks=[tboard_callback]
+            callbacks=[tboard_callback],
+            validation_split=0.3
         )
         self.model.save('./models/model_2/')
 
@@ -511,10 +552,15 @@ if __name__ == '__main__':
     plt.imshow(all_img[i])
     plt.title(x2.get_label(np.argmax(all_label[i])))
 
+    # save to file
+    print('saving to file...')
+    with open('train_data_v2.pkl', 'wb') as f:
+        pickle.dump([x2.N_classes, x2.N_batch, x2.resolution, all_img, all_label, all_img_test, x2.file_list_test, x2.unique_labels], f, protocol=4)
+
     # train
-    xx = Train(x2.N_classes, x2.N_batch, x2.resolution, all_img, all_label, all_img_test, x2.file_list_test, x2.unique_labels)
-    xx.train(epochs=10, lr=1e-3)
-    xx.test()
+    #xx = Train(x2.N_classes, x2.N_batch, x2.resolution, all_img, all_label, all_img_test, x2.file_list_test, x2.unique_labels)
+    #xx.train(epochs=10, lr=1e-3)
+    #xx.test()
 
     print('-- done')
 
